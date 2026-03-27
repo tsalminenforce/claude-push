@@ -25,7 +25,7 @@ Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code
 ## Install
 
 ```bash
-git clone https://github.com/coa00/claude-push.git
+git clone https://github.com/tsalminenforce/claude-push.git
 cd claude-push
 bash install.sh
 ```
