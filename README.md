@@ -1,6 +1,6 @@
 # claude-push
 
-Mobile push notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) permission requests via [ntfy.sh](https://ntfy.sh).
+Mobile push notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) permission requests via [ntfy](https://ntfy.sh) (public `ntfy.sh` or self-hosted).
 
 When Claude Code needs permission to run a tool, you get a push notification on your phone with **Allow** / **Deny** buttons. Tap to respond — no need to stay at your terminal.
 
@@ -8,13 +8,13 @@ When Claude Code needs permission to run a tool, you get a push notification on 
 
 ```
 Claude Code (PermissionRequest hook)
-  → ntfy.sh notification with Allow/Deny buttons
+  → ntfy notification with Allow/Deny buttons
     → You tap a button on your phone
-      → Response sent back via ntfy.sh SSE
+      → Response sent back via ntfy SSE
         → Claude Code continues (or stops)
 ```
 
-Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PermissionRequest` event) to intercept permission prompts and route them through ntfy.sh.
+Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PermissionRequest` event) to intercept permission prompts and route them through ntfy.
 
 ## Requirements
 
@@ -43,11 +43,23 @@ After install, open the ntfy app and subscribe to your topic.
 
 ## Usage
 
-Just use Claude Code as normal. When a permission request triggers, you'll get a push notification.
+Just use Claude Code as normal. When a permission request triggers, you'll get a push notification with markdown-formatted details about what action is being requested.
 
 - **Allow** — Claude Code proceeds with the action
 - **Deny** — Claude Code cancels the action
 - **Timeout** (default 90s) — Falls back to the interactive terminal prompt
+
+### Notification Format
+
+Each notification includes:
+
+- **Folder** — The working directory where the action was triggered
+- **Tool and Details** — Formatted in markdown:
+  - `Bash` — Command with description and code block
+  - `Edit` — File path with diff-style changes
+  - `Write` — File path with content preview
+  - `Read`, `Glob`, `Grep`, etc. — Relevant action details
+  - Others — JSON representation
 
 ### Configuration
 
@@ -56,6 +68,8 @@ Edit `~/.config/claude-push/config`:
 ```bash
 CLAUDE_PUSH_TOPIC="my-unique-topic"   # ntfy topic name
 CLAUDE_PUSH_TIMEOUT=90                 # seconds to wait for response
+CLAUDE_PUSH_SERVER="https://ntfy.sh"  # optional: ntfy base URL (self-hosted supported)
+CLAUDE_PUSH_TOKEN=""                  # optional: bearer token for protected server/topics
 ```
 
 Changes take effect immediately (no reinstall needed).
@@ -81,6 +95,8 @@ Removes the hook from Claude settings, installed files, and optionally the confi
 ## Security
 
 The ntfy topic name acts as a shared secret. Use a unique, hard-to-guess name. Anyone who knows your topic name can send you notifications or respond to your permission requests.
+
+If your server/topics require auth, set `CLAUDE_PUSH_TOKEN` in config. The hook sends it as a bearer token for publish, response listening (SSE), and Allow/Deny action callbacks.
 
 For private topics, see [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control).
 

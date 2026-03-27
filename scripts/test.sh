@@ -7,11 +7,16 @@ CONFIG_FILE="${HOME}/.config/claude-push/config"
 INSTALL_DIR="${HOME}/.local/share/claude-push"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
 
+DEBUG=false
+
 usage() {
-  echo "Usage: $0 <command>"
+  echo "Usage: $0 [-d] <command>"
+  echo ""
+  echo "Options:"
+  echo "  -d           Debug mode (runs hook with bash -x)"
   echo ""
   echo "Commands:"
-  echo "  test-notify  Send a test notification to verify ntfy.sh is working"
+  echo "  test-notify  Send a test notification to verify ntfy is working"
   echo "  status       Check installation status"
   exit 1
 }
@@ -26,59 +31,48 @@ check_config() {
 }
 
 cmd_test_notify() {
-  check_config
+  HOOK_PATH="${INSTALL_DIR}/hooks/claude-push.sh"
+  if [ ! -x "$HOOK_PATH" ]; then
+    echo "Error: hook not found at ${HOOK_PATH}"
+    echo "Run install.sh first."
+    exit 1
+  fi
 
-  TOPIC="$CLAUDE_PUSH_TOPIC"
-  RESPONSE_TOPIC="${TOPIC}-response"
-
-  echo "Sending test notification to topic: ${TOPIC}"
+  echo "Sending test notification via installed hook: ${HOOK_PATH}"
   echo "Tap 'Allow' or 'Deny' on your device to test the response flow."
   echo ""
 
-  REQ_ID="test-$(date +%s)"
+  # Build a fake PermissionRequest identical to what Claude Code sends
+  FAKE_INPUT=$(jq -n \
+    --arg cwd "$PWD" \
+    '{
+      session_id: "test-00000000-0000-0000-0000-000000000000",
+      transcript_path: "/tmp/claude-push-test.jsonl",
+      cwd: $cwd,
+      permission_mode: "default",
+      hook_event_name: "PermissionRequest",
+      tool_name: "Bash",
+      tool_input: {
+        command: "echo '\''hello world'\''",
+        description: "Test notification from claude-push"
+      },
+      permission_suggestions: []
+    }')
 
-  # Send notification with action buttons
-  curl -s -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg topic "$TOPIC" \
-      --arg title "[test] Bash" \
-      --arg message "echo 'hello world'" \
-      --arg allow_url "https://ntfy.sh/${RESPONSE_TOPIC}" \
-      --arg allow_body "allow|$REQ_ID" \
-      --arg deny_url "https://ntfy.sh/${RESPONSE_TOPIC}" \
-      --arg deny_body "deny|$REQ_ID" \
-      '{
-        topic: $topic, title: $title, message: $message,
-        priority: 4, tags: ["lock"],
-        actions: [
-          {action:"http",label:"Allow",url:$allow_url,method:"POST",body:$allow_body},
-          {action:"http",label:"Deny",url:$deny_url,method:"POST",body:$deny_body}
-        ]
-      }')" "https://ntfy.sh/" > /dev/null 2>&1
+  # Pipe it into the actual hook script
+  if [ "$DEBUG" = true ]; then
+    RESULT=$(echo "$FAKE_INPUT" | bash -x "$HOOK_PATH")
+  else
+    RESULT=$(echo "$FAKE_INPUT" | "$HOOK_PATH")
+  fi
 
-  echo "Notification sent! Waiting for response (timeout: ${CLAUDE_PUSH_TIMEOUT:-90}s)..."
-
-  # Wait for response
-  DECISION=""
-  while IFS= read -r line; do
-    if [[ "$line" == data:* ]]; then
-      DATA="${line#data: }"
-      MSG=$(echo "$DATA" | jq -r '.message // empty' 2>/dev/null)
-      if [[ "$MSG" == *"|$REQ_ID" ]]; then
-        DECISION="${MSG%%|*}"
-        break
-      fi
-    fi
-  done < <(curl -s -N --max-time "${CLAUDE_PUSH_TIMEOUT:-90}" \
-    -H "Accept: text/event-stream" \
-    "https://ntfy.sh/${RESPONSE_TOPIC}/sse")
-
-  if [ -n "$DECISION" ]; then
+  if [ -n "$RESULT" ]; then
+    DECISION=$(echo "$RESULT" | jq -r '.hookSpecificOutput.decision.behavior // empty')
     echo "Received: ${DECISION}"
     echo "Test passed!"
   else
     echo "Timeout: no response received."
-    echo "Make sure ntfy app is installed and subscribed to topic: ${TOPIC}"
+    echo "Make sure ntfy app is installed and subscribed to your topic."
   fi
 }
 
@@ -90,8 +84,14 @@ cmd_status() {
   if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
     echo "[OK] Config: ${CONFIG_FILE}"
+    echo "     Server: ${CLAUDE_PUSH_SERVER}"
     echo "     Topic: ${CLAUDE_PUSH_TOPIC}"
     echo "     Timeout: ${CLAUDE_PUSH_TIMEOUT:-90}s"
+    if [ -n "${CLAUDE_PUSH_TOKEN:-}" ]; then
+      echo "     Auth: bearer token configured"
+    else
+      echo "     Auth: none"
+    fi
   else
     echo "[NG] Config: not found at ${CONFIG_FILE}"
   fi
@@ -129,6 +129,14 @@ cmd_status() {
     fi
   done
 }
+
+while getopts "d" opt; do
+  case "$opt" in
+    d) DEBUG=true ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
 
 case "${1:-}" in
   test-notify) cmd_test_notify ;;
