@@ -126,45 +126,99 @@ if [ -n "$CWD" ]; then
   NOTIF_MESSAGE="Folder: **${CWD}** "$'\n'"${NOTIF_MESSAGE}"
 fi
 
-REQ_ID="$(date +%s)-$$"
+REQ_ID="$(date +%s)-$$-$(printf '%04x%04x' "$RANDOM" "$RANDOM")"
+SUBSCRIBE_SINCE="$(( $(date +%s) - 1 ))"
+NOTIFICATION_PUBLISHED=0
+
+cleanup_notification() {
+  [ "${NOTIFICATION_PUBLISHED:-0}" -eq 1 ] || return 0
+  [ -n "${REQ_ID:-}" ] || return 0
+  curl -fsS -X DELETE \
+    "${AUTH_HEADER[@]}" \
+    "${NTFY_SERVER}/${TOPIC}/${REQ_ID}" >/dev/null 2>&1 || true
+}
+
+handle_signal() {
+  local exit_code="$1"
+  cleanup_notification
+  trap - EXIT
+  exit "$exit_code"
+}
+
+trap cleanup_notification EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 # 1. Send notification with Allow/Deny action buttons (markdown format)
-curl -s -H "Content-Type: application/json" \
+PUBLISH_REQUEST="$(jq -n \
+  --arg topic "$TOPIC" \
+  --arg sequence_id "$REQ_ID" \
+  --arg title "[$CWD] $NOTIF_TITLE" \
+  --arg message "$NOTIF_MESSAGE" \
+  --arg allow_url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
+  --arg allow_body "allow|$REQ_ID" \
+  --arg deny_url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
+  --arg deny_body "deny|$REQ_ID" \
+  --arg auth "$AUTH_BEARER" \
+  '{
+    topic: $topic, sequence_id: $sequence_id, title: $title, message: $message,
+    markdown: true,
+    priority: 4, tags: ["lock"],
+    actions: [
+      ({action:"http",label:"Allow",url:$allow_url,method:"POST",body:$allow_body,clear:true} + (if $auth != "" then {headers:{Authorization:$auth}} else {} end)),
+      ({action:"http",label:"Deny",url:$deny_url,method:"POST",body:$deny_body,clear:true} + (if $auth != "" then {headers:{Authorization:$auth}} else {} end))
+    ]
+  }')"
+
+PUBLISH_RESPONSE="$(curl -sS -H "Content-Type: application/json" \
   "${AUTH_HEADER[@]}" \
-  -d "$(jq -n \
-    --arg topic "$TOPIC" \
-    --arg title "[$CWD] $NOTIF_TITLE" \
-    --arg message "$NOTIF_MESSAGE" \
-    --arg allow_url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
-    --arg allow_body "allow|$REQ_ID" \
-    --arg deny_url "${NTFY_SERVER}/${RESPONSE_TOPIC}" \
-    --arg deny_body "deny|$REQ_ID" \
-    --arg auth "$AUTH_BEARER" \
-    '{
-      topic: $topic, title: $title, message: $message,
-      markdown: true,
-      priority: 4, tags: ["lock"],
-      actions: [
-        ({action:"http",label:"Allow",url:$allow_url,method:"POST",body:$allow_body} + (if $auth != "" then {headers:{Authorization:$auth}} else {} end)),
-        ({action:"http",label:"Deny",url:$deny_url,method:"POST",body:$deny_body} + (if $auth != "" then {headers:{Authorization:$auth}} else {} end))
-      ]
-    }')" "${NTFY_SERVER}/" > /dev/null 2>&1
+  -d "$PUBLISH_REQUEST" \
+  -w '\n%{http_code}' \
+  "${NTFY_SERVER}/" 2>&1)"
+PUBLISH_STATUS=$?
+
+if [ "$PUBLISH_STATUS" -ne 0 ]; then
+  echo "claude-push: failed to publish ntfy notification: ${PUBLISH_RESPONSE}" >&2
+  exit 0
+fi
+
+PUBLISH_HTTP_CODE="${PUBLISH_RESPONSE##*$'\n'}"
+PUBLISH_BODY="${PUBLISH_RESPONSE%$'\n'*}"
+
+if [[ ! "$PUBLISH_HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+  echo "claude-push: ntfy publish returned HTTP ${PUBLISH_HTTP_CODE}: ${PUBLISH_BODY}" >&2
+  exit 0
+fi
+
+if ! printf '%s\n' "$PUBLISH_BODY" | jq -e '.event == "message" and (.id | type == "string")' >/dev/null 2>&1; then
+  echo "claude-push: ntfy publish returned unexpected response: ${PUBLISH_BODY}" >&2
+  exit 0
+fi
+
+NOTIFICATION_PUBLISHED=1
 
 # 2. Wait for response via SSE
 DECISION=""
 while IFS= read -r line; do
   if [[ "$line" == data:* ]]; then
     DATA="${line#data: }"
-    MSG=$(echo "$DATA" | jq -r '.message // empty' 2>/dev/null)
-    if [[ "$MSG" == *"|$REQ_ID" ]]; then
-      DECISION="${MSG%%|*}"
-      break
-    fi
+    MSG=$(printf '%s\n' "$DATA" | jq -r 'select(.event == "message") | .message // empty' 2>/dev/null)
+    case "$MSG" in
+      "allow|$REQ_ID")
+        DECISION="allow"
+        break
+        ;;
+      "deny|$REQ_ID")
+        DECISION="deny"
+        break
+        ;;
+    esac
   fi
 done < <(curl -s -N --max-time "$WAIT_TIMEOUT" \
   "${AUTH_HEADER[@]}" \
   -H "Accept: text/event-stream" \
-  "${NTFY_SERVER}/${RESPONSE_TOPIC}/sse")
+  "${NTFY_SERVER}/${RESPONSE_TOPIC}/sse?since=${SUBSCRIBE_SINCE}")
 
 # 3. Output decision JSON
 if [ "$DECISION" = "allow" ]; then
