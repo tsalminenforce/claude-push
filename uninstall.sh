@@ -6,6 +6,8 @@ set -euo pipefail
 INSTALL_DIR="${HOME}/.local/share/claude-push"
 CONFIG_DIR="${HOME}/.config/claude-push"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${HOME}/.config/opencode}"
+OPENCODE_PLUGIN_FILE="${OPENCODE_CONFIG_DIR}/plugins/opencode-push.ts"
 
 echo "=== claude-push uninstaller ==="
 echo ""
@@ -36,7 +38,15 @@ else
   echo "No install directory found (skipped)"
 fi
 
-# 3. Remove config (with confirmation)
+# 3. Remove OpenCode plugin
+if [ -f "$OPENCODE_PLUGIN_FILE" ]; then
+  rm -f "$OPENCODE_PLUGIN_FILE"
+  echo "Removed ${OPENCODE_PLUGIN_FILE}"
+else
+  echo "No OpenCode plugin found at ${OPENCODE_PLUGIN_FILE} (skipped)"
+fi
+
+# 4. Remove config (with confirmation)
 if [ -d "$CONFIG_DIR" ]; then
   read -rp "Remove config at ${CONFIG_DIR}? [y/N]: " answer
   if [[ "$answer" =~ ^[Yy]$ ]]; then

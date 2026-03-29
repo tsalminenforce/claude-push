@@ -1,20 +1,20 @@
 # claude-push
 
-Mobile push notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) permission requests via [ntfy](https://ntfy.sh) (public `ntfy.sh` or self-hosted).
+Mobile push notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [OpenCode](https://opencode.ai/) permission requests via [ntfy](https://ntfy.sh) (public `ntfy.sh` or self-hosted).
 
-When Claude Code needs permission to run a tool, you get a push notification on your phone with **Allow** / **Deny** buttons. Tap to respond — no need to stay at your terminal.
+When Claude Code or OpenCode needs permission to run a tool, you get a push notification on your phone with **Allow** / **Deny** buttons. Tap to respond without staying at your terminal.
 
 ## How It Works
 
 ```
-Claude Code (PermissionRequest hook)
+Claude Code hook / OpenCode plugin
   → ntfy notification with Allow/Deny buttons
     → You tap a button on your phone
       → Response sent back via ntfy SSE
-        → Claude Code continues (or stops)
+        → tool execution continues (or stops)
 ```
 
-Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PermissionRequest` event) to intercept permission prompts and route them through ntfy.
+Uses Claude Code's [hooks system](https://docs.anthropic.com/en/docs/claude-code/hooks) (`PermissionRequest` event) and an OpenCode [plugin](https://opencode.ai/docs/plugins/) (`permission.ask`) to intercept permission prompts and route them through ntfy.
 
 ## Requirements
 
@@ -37,17 +37,39 @@ The installer will:
 3. Create config at `~/.config/claude-push/config`
 4. Install the hook to `~/.local/share/claude-push/hooks/`
 5. Register the hook in `~/.claude/settings.json`
-6. Send a test notification
+6. Install the OpenCode plugin to `~/.config/opencode/plugins/opencode-push.ts`
+7. Print the OpenCode `permission` block to merge into your config
+8. Send a test notification
 
 After install, open the ntfy app and subscribe to your topic.
 
 ## Usage
 
-Just use Claude Code as normal. When a permission request triggers, you'll get a push notification with markdown-formatted details about what action is being requested.
+Just use Claude Code or OpenCode as normal. When a permission request triggers, you'll get a push notification with markdown-formatted details about the requested action.
 
-- **Allow** — Claude Code proceeds with the action
-- **Deny** — Claude Code cancels the action
-- **Timeout** (default 90s) — Falls back to the interactive terminal prompt
+- **Allow** — the tool call proceeds
+- **Deny** — the tool call is blocked
+- **Timeout** (default 90s) — falls back to the interactive terminal prompt or OpenCode approval UI
+
+### OpenCode Notes
+
+OpenCode only asks for approval when the relevant permissions are configured as `ask`.
+
+The installer prints this block for you to merge into `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": "ask",
+    "edit": "ask",
+    "task": "ask",
+    "webfetch": "ask"
+  }
+}
+```
+
+Merge it into your existing config rather than replacing the whole file.
 
 ### Notification Format
 
@@ -63,7 +85,7 @@ Each notification includes:
 
 ### Configuration
 
-Edit `~/.config/claude-push/config`:
+Claude Code and OpenCode share the same config file at `~/.config/claude-push/config`:
 
 ```bash
 CLAUDE_PUSH_TOPIC="my-unique-topic"   # ntfy topic name
@@ -96,13 +118,13 @@ Removes the hook from Claude settings, installed files, and optionally the confi
 
 The ntfy topic name acts as a shared secret. Use a unique, hard-to-guess name. Anyone who knows your topic name can send you notifications or respond to your permission requests.
 
-If your server/topics require auth, set `CLAUDE_PUSH_TOKEN` in config. The hook sends it as a bearer token for publish, response listening (SSE), and Allow/Deny action callbacks.
+If your server/topics require auth, set `CLAUDE_PUSH_TOKEN` in config. Both the Claude hook and OpenCode plugin send it as a bearer token for publish, response listening (SSE), and Allow/Deny action callbacks.
 
 For private topics, see [ntfy.sh access control](https://docs.ntfy.sh/config/#access-control).
 
 ## Credits
 
-Inspired by [konsti-web/claude_push](https://github.com/konsti-web/claude_push) (Windows/PowerShell + keystroke injection). This repo is a **macOS/Linux + bash + PermissionRequest hook** approach.
+Inspired by [konsti-web/claude_push](https://github.com/konsti-web/claude_push) (Windows/PowerShell + keystroke injection). This repo is a **macOS/Linux + bash Claude hook + TypeScript OpenCode plugin** approach.
 
 ## License
 

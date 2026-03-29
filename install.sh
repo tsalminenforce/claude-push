@@ -8,7 +8,25 @@ INSTALL_DIR="${HOME}/.local/share/claude-push"
 CONFIG_DIR="${HOME}/.config/claude-push"
 CONFIG_FILE="${CONFIG_DIR}/config"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${HOME}/.config/opencode}"
+OPENCODE_PLUGIN_DIR="${OPENCODE_CONFIG_DIR}/plugins"
+OPENCODE_PLUGIN_FILE="${OPENCODE_PLUGIN_DIR}/opencode-push.ts"
+OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG:-${OPENCODE_CONFIG_DIR}/opencode.json}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+print_opencode_permission_help() {
+  echo "Please install this block to your OpenCode config to enable approval prompts for the plugin:"
+  echo "Target file: ${OPENCODE_CONFIG_FILE}"
+  echo ""
+  cat <<'EOF'
+"permission": {
+  "bash": "ask",
+  "edit": "ask",
+  "task": "ask",
+  "webfetch": "ask"
+}
+EOF
+}
 
 echo "=== claude-push installer ==="
 echo ""
@@ -120,6 +138,16 @@ else
   echo "Hook registered in ${CLAUDE_SETTINGS}"
 fi
 
+# 8. Install OpenCode plugin and configure permission prompts
+mkdir -p "$OPENCODE_PLUGIN_DIR"
+cp "$SCRIPT_DIR/plugins/opencode-push.ts" "$OPENCODE_PLUGIN_FILE"
+echo "OpenCode plugin installed to ${OPENCODE_PLUGIN_FILE}"
+
+if command -v opencode &> /dev/null || [ -f "$OPENCODE_CONFIG_FILE" ] || [ -d "$OPENCODE_CONFIG_DIR" ]; then
+  echo ""
+  print_opencode_permission_help
+fi
+
 # 9. Test notification
 echo ""
 echo "Sending test notification to topic: ${TOPIC} on ${SERVER}"
@@ -151,7 +179,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Install ntfy app on your phone (${SERVER})"
 echo "  2. Subscribe to topic: ${TOPIC}"
-echo "  3. Start Claude Code - permission requests will be pushed to your device"
+echo "  3. Start Claude Code or OpenCode - permission requests will be pushed to your device"
 echo ""
 echo "To verify: bash ${SCRIPT_DIR}/scripts/test.sh test-notify"
 echo "To check:  bash ${SCRIPT_DIR}/scripts/test.sh status"

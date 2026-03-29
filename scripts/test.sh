@@ -6,6 +6,9 @@ set -euo pipefail
 CONFIG_FILE="${HOME}/.config/claude-push/config"
 INSTALL_DIR="${HOME}/.local/share/claude-push"
 CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${HOME}/.config/opencode}"
+OPENCODE_PLUGIN_FILE="${OPENCODE_CONFIG_DIR}/plugins/opencode-push.ts"
+OPENCODE_CONFIG_FILE="${OPENCODE_CONFIG:-${OPENCODE_CONFIG_DIR}/opencode.json}"
 
 DEBUG=false
 
@@ -104,6 +107,13 @@ cmd_status() {
     echo "[NG] Hook: not found or not executable at ${HOOK_PATH}"
   fi
 
+  # OpenCode plugin
+  if [ -f "$OPENCODE_PLUGIN_FILE" ]; then
+    echo "[OK] OpenCode plugin: ${OPENCODE_PLUGIN_FILE}"
+  else
+    echo "[NG] OpenCode plugin: not found at ${OPENCODE_PLUGIN_FILE}"
+  fi
+
   # Claude settings
   if [ -f "$CLAUDE_SETTINGS" ] && command -v jq &> /dev/null; then
     HOOK_REGISTERED=$(jq -r '
@@ -118,6 +128,67 @@ cmd_status() {
     fi
   else
     echo "[NG] Settings: ${CLAUDE_SETTINGS} not found or jq missing"
+  fi
+
+  # OpenCode config
+  if command -v opencode &> /dev/null && command -v jq &> /dev/null; then
+    if OPENCODE_RESOLVED=$(opencode debug config 2>/dev/null); then
+      echo "[OK] OpenCode config: resolved via opencode debug config"
+      for permission in bash edit task webfetch; do
+        VALUE=$(printf '%s\n' "$OPENCODE_RESOLVED" | jq -r --arg permission "$permission" '
+          if (.permission | type?) == "object" then .permission[$permission] // "missing"
+          elif .permission == null then "missing"
+          else "non-object"
+          end
+        ')
+        case "$VALUE" in
+          ask)
+            echo "     ${permission}: ask"
+            ;;
+          allow|deny)
+            echo "     ${permission}: ${VALUE}"
+            ;;
+          missing)
+            echo "     ${permission}: missing"
+            ;;
+          *)
+            echo "     ${permission}: ${VALUE}"
+            ;;
+        esac
+      done
+      echo "     Note: the plugin loads from ${OPENCODE_PLUGIN_FILE}, but OpenCode only prompts when these permissions resolve to ask."
+    else
+      echo "[NG] OpenCode config: could not resolve via opencode debug config"
+    fi
+  elif [ -f "$OPENCODE_CONFIG_FILE" ] && command -v jq &> /dev/null && jq -e . "$OPENCODE_CONFIG_FILE" > /dev/null 2>&1; then
+    echo "[OK] OpenCode config: ${OPENCODE_CONFIG_FILE}"
+    for permission in bash edit task webfetch; do
+      VALUE=$(jq -r --arg permission "$permission" '
+        if (.permission | type?) == "object" then .permission[$permission] // "missing"
+        elif .permission == null then "missing"
+        else "non-object"
+        end
+      ' "$OPENCODE_CONFIG_FILE")
+      case "$VALUE" in
+        ask)
+          echo "     ${permission}: ask"
+          ;;
+        allow|deny)
+          echo "     ${permission}: ${VALUE}"
+          ;;
+        missing)
+          echo "     ${permission}: missing"
+          ;;
+        *)
+          echo "     ${permission}: ${VALUE}"
+          ;;
+      esac
+    done
+    echo "     Note: the plugin loads from ${OPENCODE_PLUGIN_FILE}, but OpenCode only prompts when these permissions resolve to ask."
+  elif [ -f "$OPENCODE_CONFIG_FILE" ]; then
+    echo "[NG] OpenCode config: ${OPENCODE_CONFIG_FILE} exists but could not be inspected"
+  else
+    echo "[NG] OpenCode config: not found at ${OPENCODE_CONFIG_FILE}"
   fi
 
   # Dependencies
